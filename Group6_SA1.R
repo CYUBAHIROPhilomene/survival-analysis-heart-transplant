@@ -211,3 +211,59 @@ model_comparison <- model_comparison[order(model_comparison$AIC), ]
 
 cat("\n Model Comparison Table (sorted by AIC) \n")
 print(model_comparison)
+
+# LIFE FUNCTIONS OF THE LOG-NORMAL MODEL
+
+# Fit Log-Normal model
+fit_lnorm <- flexsurvreg(SurvObj ~ 1, dist = "lnorm")
+print(fit_lnorm)
+
+# Extract parameters
+mu    <- fit_lnorm$res["meanlog", "est"]
+sigma <- fit_lnorm$res["sdlog",   "est"]
+
+cat("\nMLE of meanlog (mu):",   round(mu, 3),    "\n")
+cat("MLE of sdlog  (sigma):",  round(sigma, 3), "\n")
+
+# Time sequence
+time_seq <- seq(0, max(stanford2_clean$time), by = 10)
+
+# Life functions
+S_t <- 1 - pnorm((log(time_seq + 1e-10) - mu) / sigma)
+f_t <- dlnorm(time_seq + 1e-10, meanlog = mu, sdlog = sigma)
+h_t <- f_t / (S_t + 1e-10)
+F_t <- 1 - S_t
+
+# Mean and variance
+mean_T <- exp(mu + sigma^2 / 2)
+var_T  <- (exp(sigma^2) - 1) * exp(2 * mu + sigma^2)
+
+cat("\nMean Survival Time:", round(mean_T, 2), "days\n")
+cat("Variance:",           round(var_T, 2),  "days^2\n")
+
+# 2x2 plot
+par(mfrow = c(2, 2))
+
+plot(time_seq, S_t, type = "l", col = "blue", lwd = 2,
+     xlab = "Time (days)", ylab = "S(t)",
+     main = "Survival Function (Log-Normal)")
+
+plot(time_seq, h_t, type = "l", col = "red", lwd = 2,
+     xlab = "Time (days)", ylab = "h(t)",
+     main = "Hazard Function (Log-Normal)")
+
+plot(time_seq, f_t, type = "l", col = "darkgreen", lwd = 2,
+     xlab = "Time (days)", ylab = "f(t)",
+     main = "Density Function (Log-Normal)")
+
+plot(time_seq, F_t, type = "l", col = "purple", lwd = 2,
+     xlab = "Time (days)", ylab = "F(t)",
+     main = "CDF (Log-Normal)")
+
+par(mfrow = c(1, 1))
+
+
+# MLE PARAMETER ESTIMATES
+
+cat("\n MLE Estimates for Log-Normal Model \n")
+print(fit_lnorm$res)
