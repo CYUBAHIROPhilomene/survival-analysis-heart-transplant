@@ -183,3 +183,31 @@ ggsave(
 SurvObj <- Surv(time = stanford2_clean$time, event = stanford2_clean$status)
 #View(SurvObj)
 
+# FIT MULTIPLE PARAMETRIC MODELS
+
+fits <- list(
+  Exponential = flexsurvreg(SurvObj ~ 1, dist = "exp"),
+  Weibull     = flexsurvreg(SurvObj ~ 1, dist = "weibull"),
+  LogNormal   = flexsurvreg(SurvObj ~ 1, dist = "lnorm"),
+  LogLogistic = flexsurvreg(SurvObj ~ 1, dist = "llogis"),
+  Gamma       = flexsurvreg(SurvObj ~ 1, dist = "gamma"),
+  GenGamma    = flexsurvreg(SurvObj ~ 1, dist = "gengamma")
+)
+
+fits
+
+# MODEL SELECTION (AIC)
+
+aic_values    <- sapply(fits, AIC)
+loglik_values <- sapply(fits, function(m) m$loglik)
+
+model_comparison <- data.frame(
+  Model         = names(fits),
+  LogLikelihood = round(loglik_values, 3),
+  AIC           = round(aic_values, 3)
+)
+model_comparison <- model_comparison[order(model_comparison$AIC), ]
+
+
+cat("\n Model Comparison Table (sorted by AIC) \n")
+print(model_comparison)
