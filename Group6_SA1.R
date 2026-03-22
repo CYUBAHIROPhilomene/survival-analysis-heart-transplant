@@ -196,6 +196,34 @@ fits <- list(
 
 fits
 
+# KAPLAN-MEIER ESTIMATOR
+km_fit <- survfit(SurvObj ~ 1, data = stanford2_clean)
+summary(km_fit)
+
+
+km_df <- data.frame(
+  time = km_fit$time,
+  surv = km_fit$surv
+)
+
+# Time grid for smooth parametric curves
+time_grid <- seq(0, max(stanford2_clean$time), length.out = 300)
+
+# EXTRACT PARAMETRIC SURVIVAL CURVES
+param_surv_list <- lapply(names(fits), function(model_name) {
+  
+  s <- summary(fits[[model_name]], type = "survival", t = time_grid)[[1]]
+  
+  data.frame(
+    time = s$time,
+    surv = s$est,
+    Model = model_name
+  )
+})
+
+param_surv_df <- bind_rows(param_surv_list)
+
+
 # MODEL SELECTION (AIC)
 
 aic_values    <- sapply(fits, AIC)
@@ -211,6 +239,45 @@ model_comparison <- model_comparison[order(model_comparison$AIC), ]
 
 cat("\n Model Comparison Table (sorted by AIC) \n")
 print(model_comparison)
+
+
+# KM VS LogNormal
+best_name <- model_comparison$Model[1]
+best_model <- fits[[best_name]]
+
+best_surv <- summary(best_model, type = "survival", t = time_grid)[[1]]
+
+best_df <- data.frame(
+  time = best_surv$time,
+  surv = best_surv$est
+)
+
+km_best_plot <- ggplot() +
+  geom_step(
+    data = km_df,
+    aes(x = time, y = surv, color = "Kaplan-Meier"),
+    linewidth = 1.2
+  ) +
+  geom_line(
+    data = best_df,
+    aes(x = time, y = surv, color = best_name),
+    linewidth = 1.2
+  ) +
+  labs(
+    title = paste("Kaplan-Meier Curve vs", best_name, "Model"),
+    x = "Time (days)",
+    y = "Survival Probability",
+    color = "Curve"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "right",
+    plot.title = element_text(face = "bold")
+  )
+
+km_best_plot
+
+
 
 # LIFE FUNCTIONS OF THE LOG-NORMAL MODEL
 
