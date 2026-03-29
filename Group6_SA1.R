@@ -667,3 +667,197 @@ multi_table %>%
   )
 
 
+
+# Proportional Hazards Assumption — Schoenfeld Residuals (Q3)
+ph_test <- cox.zph(cox_multi)
+print(ph_test)
+
+# Plot Schoenfeld residuals
+par(mfrow = c(1, 2))
+plot(ph_test[1], main = "Schoenfeld Residuals: age")
+abline(h = 0, col = "red", lty = 2)
+plot(ph_test[2], main = "Schoenfeld Residuals: t5")
+abline(h = 0, col = "red", lty = 2)
+par(mfrow = c(1, 1))
+
+
+global_p <- round(ph_test$table["GLOBAL", "p"], 4)
+cat("GLOBAL -> p =", global_p,
+    "->", ifelse(global_p > 0.05,
+                 "Overall PH assumption HOLDS",
+                 "Overall PH assumption VIOLATED"), "\n")
+
+
+# Influential Observations — dfbeta Residuals 
+
+dfbeta_res <- residuals(cox_multi, type = "dfbeta")
+colnames(dfbeta_res) <- c("age", "t5")
+
+dfbeta_df <- as.data.frame(dfbeta_res)
+dfbeta_df$id <- seq_len(nrow(dfbeta_df))
+
+# Plot 
+par(mfrow = c(1, 2))
+
+plot(dfbeta_df$id, dfbeta_df$age,
+     type = "h", col = "#2166ac",
+     xlab = "Observation Index",
+     ylab = "dfbeta",
+     main = "Influential Obs: age (dfbeta)")
+abline(h = 0, col = "red", lty = 2)
+
+plot(dfbeta_df$id, dfbeta_df$t5,
+     type = "h", col = "#d6604d",
+     xlab = "Observation Index",
+     ylab = "dfbeta",
+     main = "Influential Obs: t5 (dfbeta)")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+
+# Flag potentially influential observations
+threshold_age <- 2 * sd(dfbeta_df$age)
+threshold_t5  <- 2 * sd(dfbeta_df$t5)
+
+influential <- dfbeta_df[
+  abs(dfbeta_df$age) > threshold_age |
+    abs(dfbeta_df$t5)  > threshold_t5, ]
+
+cat("Potentially influential observations (|dfbeta| > 2 SD):\n")
+print(influential)
+
+# Linearity in Log-Hazard — Martingale Residuals (Q5)
+
+# Fit null Cox model (no covariates) for Martingale residuals
+cox_null <- coxph(Surv(time, status) ~ 1, data = stanford2_clean)
+mart_res  <- residuals(cox_null, type = "martingale")
+
+stanford2_mart <- stanford2_clean
+stanford2_mart$mart_res <- mart_res
+
+# Plot Martingale residuals vs each continuous covariate
+par(mfrow = c(1, 2))
+
+
+plot(stanford2_mart$age, stanford2_mart$mart_res,
+     col = "#2166ac", pch = 16, alpha = 0.5,
+     xlab = "Age (years)", ylab = "Martingale Residuals",
+     main = "Martingale Residuals vs Age")
+lines(lowess(stanford2_mart$age, stanford2_mart$mart_res),
+      col = "red", lwd = 2)
+abline(h = 0, col = "grey40", lty = 2)
+
+
+plot(stanford2_mart$t5, stanford2_mart$mart_res,
+     col = "black", pch = 16,
+     xlab = "T5 Mismatch Score", ylab = "Martingale Residuals",
+     main = "Martingale Residuals vs t5")
+lines(lowess(stanford2_mart$t5, stanford2_mart$mart_res),
+      col = "red", lwd = 2)
+abline(h = 0, col = "grey40", lty = 2)
+
+par(mfrow = c(1, 1))
+
+
+# MODEL REFINEMENT AND EXTENDED COX MODELS
+
+
+
+# Set datadist for rms (required for rcs)
+dd <- datadist(stanford2_clean)
+options(datadist = "dd")
+
+
+# Address PH Violation — Time-Dependent Coefficient 
+
+# Create time-interaction term: age × log(time)
+# Using tt() function in coxph for time-transform
+cox_td <- coxph(
+  Surv(time, status) ~ age + tt(age) + t5,
+  data = stanford2_clean,
+  tt   = function(x, t, ...) x * log(t)
+)
+
+summary(cox_td)
+
+# Compare AIC: original vs time-dependent model
+aic_multi <- AIC(cox_multi)
+aic_td    <- AIC(cox_td)
+
+cat("\nAIC - Original multivariable model:", round(aic_multi, 3), "\n")
+cat("AIC - Time-dependent coefficient model:", round(aic_td, 3), "\n")
+
+
+# Address Non-Linearity — Restricted Cubic Spline for age 
+
+# Fit Cox model with RCS for age (4 knots) + t5
+cox_rcs <- cph(
+  Surv(time, status) ~ rcs(age, 4) + t5,
+  data    = stanford2_clean,
+  x       = TRUE,
+  y       = TRUE,
+  surv    = TRUE
+)
+
+print(cox_rcs)
+
+# ANOVA to test overall significance and non-linearity of age
+print(anova(cox_rcs))
+
+# Plot the spline: log HR vs age
+plot(
+  Predict(cox_rcs, age, fun = exp),
+  ylab  = "Hazard Ratio (relative to reference)",
+  xlab  = "Age (years)",
+  main  = "Non-Linear Effect of Age on Hazard (RCS, 4 knots)",
+  col   = "#2166ac",
+  lwd   = 2
+)
+abline(h = 1, col = "red", lty = 2)
+
+
+# Final Refined Model Comparison 
+
+# Fit the final refined model:
+# RCS for age (non-linearity) + t5 (linear, PH holds)
+cox_final <- cph(
+  Surv(time, status) ~ rcs(age, 4) + t5,
+  data  = stanford2_clean,
+  x     = TRUE,
+  y     = TRUE,
+  surv  = TRUE
+)
+
+print(cox_final)
+
+# AIC comparison: original, time-dependent, spline
+aic_rcs <- AIC(
+  coxph(Surv(time, status) ~ rcs(age, 4) + t5,
+        data = stanford2_clean)
+)
+
+
+comparison_table <- data.frame(
+  Model = c(
+    "Original (age + t5, linear)",
+    "Time-dependent coefficient (age x log(t) + t5)",
+    "Refined: RCS(age, 4 knots) + t5"
+  ),
+  AIC = round(c(aic_multi, aic_td, aic_rcs), 3)
+)
+
+print(comparison_table)
+
+comparison_table %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table: Model Comparison (Original vs Refined Cox Models)**")
+  ) %>%
+  cols_label(
+    Model = "Model",
+    AIC   = "AIC"  ) %>%
+  cols_align(align = "center", columns = AIC) %>%
+  tab_style(
+    style     = list(cell_fill(color = "#d4edda")),
+    locations = cells_body(rows = AIC == min(AIC))
+  )
