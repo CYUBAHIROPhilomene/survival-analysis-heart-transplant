@@ -576,3 +576,94 @@ test_comparison %>%
     style = list(cell_fill(color = "#d4edda")),
     locations = cells_body(rows = P_Value < 0.05)
   )
+
+
+# SEMI-PARAMETRIC ANALYSIS — COX PROPORTIONAL HAZARDS
+
+#  Univariable Cox Models 
+
+# Univariable: age
+cox_age <- coxph(Surv(time, status) ~ age, data = stanford2_clean)
+summary(cox_age)
+
+# Univariable: t5
+cox_t5 <- coxph(Surv(time, status) ~ t5, data = stanford2_clean)
+summary(cox_t5)
+
+# Univariable: age_group 
+cox_agegroup <- coxph(Surv(time, status) ~ age_group,
+                      data = stanford2_clean)
+summary(cox_agegroup)
+
+# summary table
+extract_cox <- function(model, varname) {
+  s  <- summary(model)
+  cf <- s$conf.int
+  co <- s$coefficients
+  data.frame(
+    Variable   = varname,
+    HR         = round(cf[, "exp(coef)"],       3),
+    Lower_95CI = round(cf[, "lower .95"],        3),
+    Upper_95CI = round(cf[, "upper .95"],        3),
+    P_Value    = round(co[, "Pr(>|z|)"],         4),
+    row.names  = NULL
+  )
+}
+
+uni_table <- rbind(
+  extract_cox(cox_age,      "age "),
+  extract_cox(cox_t5,       "t5 "),
+  extract_cox(cox_agegroup, "age_group (Older >40 vs Young <=40)")
+)
+
+print(uni_table)
+
+uni_table %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table: Univariable Cox PH Model Results**")
+  ) %>%
+  cols_label(
+    Variable   = "Variable",
+    HR         = "Hazard Ratio",
+    Lower_95CI = "95% CI Lower",
+    Upper_95CI = "95% CI Upper",
+    P_Value    = "P-Value"
+  ) %>%
+  cols_align(align = "center", columns = -Variable) %>%
+  tab_style(
+    style = list(cell_fill(color = "#d4edda")),
+    locations = cells_body(rows = P_Value < 0.05)
+  )
+
+#  Multivariable Cox Model 
+
+cox_multi <- coxph(Surv(time, status) ~ age + t5,
+                   data = stanford2_clean)
+summary(cox_multi)
+
+# Extract multivariable results
+multi_table <- extract_cox(cox_multi, "")
+multi_table$Variable <- rownames(summary(cox_multi)$conf.int)
+
+print(multi_table)
+
+multi_table %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table: Multivariable Cox PH Model Results**")
+  ) %>%
+  cols_label(
+    Variable   = "Variable",
+    HR         = "Hazard Ratio",
+    Lower_95CI = "95% CI Lower",
+    Upper_95CI = "95% CI Upper",
+    P_Value    = "P-Value"
+  ) %>%
+  cols_align(align = "center", columns = -Variable) %>%
+  tab_style(
+    style = list(cell_fill(color = "#d4edda")),
+    locations = cells_body(rows = P_Value < 0.05)
+  )
+
+
