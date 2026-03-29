@@ -1,6 +1,5 @@
 rm(list = ls())
 
-
 library(survival)
 library(flexsurv)
 library(ggplot2)
@@ -11,14 +10,15 @@ library(scales)
 library(viridis)
 library(gt)
 library(patchwork)
+library(rms)
+library(survminer)
+library(muhaz)
 
 # DATA EXPLORATION
+
 data(stanford2)
 
 head(stanford2)
-#View(stanford2)
-
-# Total observations
 n_total    <- nrow(stanford2)
 n_events   <- sum(stanford2$status == 1)
 n_censored <- sum(stanford2$status == 0)
@@ -27,35 +27,51 @@ cat("Total observations:", n_total, "\n")
 cat("Deaths (events):", n_events, "\n")
 cat("Censored:", n_censored, "\n")
 
-# Summary of survival time
-cat(" Summary of Survival Time (days) \n")
+
+cat("\n Summary of Survival Time (days) \n")
 cat("Min:",    min(stanford2$time),                "\n")
 cat("Max:",    max(stanford2$time),                "\n")
 cat("Mean:",   round(mean(stanford2$time), 2),     "\n")
 cat("Median:", median(stanford2$time),             "\n")
 
-# Summary of age
+
 cat("\n Summary of Age (years) \n")
 cat("Min:",  min(stanford2$age),             "\n")
 cat("Max:",  max(stanford2$age),             "\n")
 cat("Mean:", round(mean(stanford2$age), 2),  "\n")
 
-# Missing values
-cat("\n Missing Values \n")
+
+cat("\n Missing Values (Before Cleaning) \n")
 print(colSums(is.na(stanford2)))
 
 
-# DATA PREPARATION
+
+## DATA PREPARATION
 
 table(stanford2$status)
-
-# Remove rows with missing time or status only
 stanford2_clean <- stanford2[!is.na(stanford2$time) & !is.na(stanford2$status), ]
 cat("Observations after cleaning:", nrow(stanford2_clean), "\n")
 
+# Handle missing values in t5
+table(stanford2$status)
+
+stanford2_clean <- stanford2[!is.na(stanford2$time) & !is.na(stanford2$status), ]
+cat("Observations after cleaning:", nrow(stanford2_clean), "\n")
+
+# t5 is right-skewed with outliers -> use median for imputation
+cat("\nt5 before imputation:\n")
+cat("Missing:", sum(is.na(stanford2_clean$t5)), "\n")
+cat("Mean:",   round(mean(stanford2_clean$t5,   na.rm = TRUE), 4), "\n")
+cat("Median:", round(median(stanford2_clean$t5, na.rm = TRUE), 4), "\n")
+
+t5_median <- median(stanford2_clean$t5, na.rm = TRUE)
+stanford2_clean$t5[is.na(stanford2_clean$t5)] <- t5_median
+
+cat("\nMissing values after imputation:\n")
+print(colSums(is.na(stanford2_clean)))
 
 
-# Descriptive statistics table
+# DESCRIPTIVE STATISTICS TABLE
 
 desc_stats <- function(x) {
   c(
@@ -86,28 +102,19 @@ desc_table <- desc_table %>%
   ) %>%
   select(Variable, N, Missing, `Mean (SD)`, Median, Min, Max)
 
-
 desc_table %>%
   gt() %>%
   tab_header(
-    title = md("**Table 1. Descriptive Statistics of Key Variables**")  ) %>%
+    title = md("**Table 1. Descriptive Statistics of Key Variables**")
+  ) %>%
   cols_align(
     align = "center",
     columns = -Variable
   )
 
-gtsave(desc_table %>%
-         gt() %>%
-         tab_header(
-           title = md("**Table 1. Descriptive Statistics of Key Variables**")         ) %>%
-         cols_align(
-           align = "center",
-           columns = -Variable
-         ),
-       filename = "descriptive_table.png")
 
 
-
+# DATA VISUALIZATION
 
 # Create grouped status variable
 stanford2_plot <- stanford2_clean %>%
@@ -118,7 +125,6 @@ stanford2_plot <- stanford2_clean %>%
       labels = c("Censored", "Event")
     )
   )
-
 
 # Survival time distribution
 plot_time_facet <- ggplot(stanford2_plot, aes(x = time, fill = status_group)) +
@@ -138,7 +144,7 @@ plot_time_facet <- ggplot(stanford2_plot, aes(x = time, fill = status_group)) +
 
 plot_time_facet
 
-# Age distribution - separate panels + loess line
+# Age distribution 
 plot_age_facet_loess <- ggplot(stanford2_plot, aes(x = age)) +
   geom_histogram(
     bins = 15,
@@ -161,7 +167,6 @@ plot_age_facet_loess <- ggplot(stanford2_plot, aes(x = age)) +
 
 plot_age_facet_loess
 
-
 ggsave(
   filename = "survival_time_facet.png",
   plot = plot_time_facet,
@@ -179,11 +184,9 @@ ggsave(
 )
 
 
-# Create survival object
-SurvObj <- Surv(time = stanford2_clean$time, event = stanford2_clean$status)
-#View(SurvObj)
-
 # FIT MULTIPLE PARAMETRIC MODELS
+
+SurvObj <- Surv(time = stanford2_clean$time, event = stanford2_clean$status)
 
 fits <- list(
   Exponential = flexsurvreg(SurvObj ~ 1, dist = "exp"),
@@ -196,27 +199,14 @@ fits <- list(
 
 fits
 
-# KAPLAN-MEIER ESTIMATOR
-km_fit <- survfit(SurvObj ~ 1, data = stanford2_clean)
-summary(km_fit)
-
-
-km_df <- data.frame(
-  time = km_fit$time,
-  surv = km_fit$surv
-)
-
-# Time grid for smooth parametric curves
 time_grid <- seq(0, max(stanford2_clean$time), length.out = 300)
 
-# EXTRACT PARAMETRIC SURVIVAL CURVES
+
 param_surv_list <- lapply(names(fits), function(model_name) {
-  
   s <- summary(fits[[model_name]], type = "survival", t = time_grid)[[1]]
-  
   data.frame(
-    time = s$time,
-    surv = s$est,
+    time  = s$time,
+    surv  = s$est,
     Model = model_name
   )
 })
@@ -224,7 +214,7 @@ param_surv_list <- lapply(names(fits), function(model_name) {
 param_surv_df <- bind_rows(param_surv_list)
 
 
-# MODEL SELECTION (AIC)
+#  MODEL SELECTION (AIC)
 
 aic_values    <- sapply(fits, AIC)
 loglik_values <- sapply(fits, function(m) m$loglik)
@@ -236,63 +226,31 @@ model_comparison <- data.frame(
 )
 model_comparison <- model_comparison[order(model_comparison$AIC), ]
 
-
 cat("\n Model Comparison Table (sorted by AIC) \n")
 print(model_comparison)
 
 
-# KM VS LogNormal
-best_name <- model_comparison$Model[1]
+best_name  <- model_comparison$Model[1]
 best_model <- fits[[best_name]]
 
 best_surv <- summary(best_model, type = "survival", t = time_grid)[[1]]
-
-best_df <- data.frame(
+best_df   <- data.frame(
   time = best_surv$time,
   surv = best_surv$est
 )
 
-km_best_plot <- ggplot() +
-  geom_step(
-    data = km_df,
-    aes(x = time, y = surv, color = "Kaplan-Meier"),
-    linewidth = 1.2
-  ) +
-  geom_line(
-    data = best_df,
-    aes(x = time, y = surv, color = best_name),
-    linewidth = 1.2
-  ) +
-  labs(
-    title = paste("Kaplan-Meier Curve vs", best_name, "Model"),
-    x = "Time (days)",
-    y = "Survival Probability",
-    color = "Curve"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    legend.position = "right",
-    plot.title = element_text(face = "bold")
-  )
-
-km_best_plot
-
-
 
 # LIFE FUNCTIONS OF THE LOG-NORMAL MODEL
 
-# Fit Log-Normal model
 fit_lnorm <- flexsurvreg(SurvObj ~ 1, dist = "lnorm")
 print(fit_lnorm)
 
-# Extract parameters
 mu    <- fit_lnorm$res["meanlog", "est"]
 sigma <- fit_lnorm$res["sdlog",   "est"]
 
-cat("\nMLE of meanlog (mu):",   round(mu, 3),    "\n")
-cat("MLE of sdlog  (sigma):",  round(sigma, 3), "\n")
+cat("\nMLE of meanlog (mu):",  round(mu, 3),    "\n")
+cat("MLE of sdlog  (sigma):", round(sigma, 3), "\n")
 
-# Time sequence
 time_seq <- seq(0, max(stanford2_clean$time), by = 10)
 
 # Life functions
@@ -308,7 +266,7 @@ var_T  <- (exp(sigma^2) - 1) * exp(2 * mu + sigma^2)
 cat("\nMean Survival Time:", round(mean_T, 2), "days\n")
 cat("Variance:",           round(var_T, 2),  "days^2\n")
 
-# 2x2 plot
+# Plots
 par(mfrow = c(2, 2))
 
 plot(time_seq, S_t, type = "l", col = "blue", lwd = 2,
@@ -330,7 +288,144 @@ plot(time_seq, F_t, type = "l", col = "purple", lwd = 2,
 par(mfrow = c(1, 1))
 
 
+
 # MLE PARAMETER ESTIMATES
 
 cat("\n MLE Estimates for Log-Normal Model \n")
 print(fit_lnorm$res)
+
+
+# NON-PARAMETRIC ANALYSIS — KAPLAN-MEIER ESTIMATOR
+
+# Overall KM Estimate
+km_fit <- survfit(SurvObj ~ 1, data = stanford2_clean)
+summary(km_fit)
+
+# Key statistics
+cat("\n--- KM Overall Summary ---\n")
+cat("Median survival time:", km_fit$table["median"], "days\n")
+cat("95% CI for median:  [",
+    km_fit$table["0.95LCL"], ",",
+    km_fit$table["0.95UCL"], "] days\n")
+
+
+#the percentile time points from the observed data
+t25 <- quantile(stanford2_clean$time, 0.25)
+t50 <- quantile(stanford2_clean$time, 0.50)
+t75 <- quantile(stanford2_clean$time, 0.75)
+
+km_at_times <- summary(km_fit, times = c(t25, t50, t75))
+
+surv_prob_table <- data.frame(
+  Percentile       = c("25th", "50th", "75th"),
+  Time_days        = c(t25, t50, t75),
+  Survival_Prob    = round(km_at_times$surv, 4),
+  Lower_95CI       = round(km_at_times$lower, 4),
+  Upper_95CI       = round(km_at_times$upper, 4)
+)
+
+print(surv_prob_table)
+
+surv_prob_table %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table: KM Survival Probabilities at Key Time Points**")
+  ) %>%
+  cols_label(
+    Percentile    = "Percentile",
+    Time_days     = "Time (days)",
+    Survival_Prob = "S(t)",
+    Lower_95CI    = "95% CI Lower",
+    Upper_95CI    = "95% CI Upper"
+  ) %>%
+  cols_align(align = "center", columns = -Percentile)
+
+
+# Stratified KM Curves by Age Group
+
+stanford2_clean <- stanford2_clean %>%
+  mutate(
+    age_group = factor(
+      ifelse(age <= 40, "Young (≤40)", "Older (>40)"),
+      levels = c("Young (≤40)", "Older (>40)")
+    )
+  )
+
+# Stratified KM fit
+km_fit_grouped <- survfit(
+  Surv(time, status) ~ age_group,
+  data = stanford2_clean
+)
+
+print(km_fit_grouped)
+summary(km_fit_grouped)$table
+
+
+#  Overall KM Curve 
+km_df <- data.frame(
+  time  = km_fit$time,
+  surv  = km_fit$surv,
+  lower = km_fit$lower,
+  upper = km_fit$upper
+)
+
+plot_km_overall <- ggplot(km_df, aes(x = time, y = surv)) +
+  geom_step(color = "#1b7837", linewidth = 1) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.15, fill = "#1b7837") +
+  geom_hline(yintercept = 0.5, linetype = "dashed",
+             color = "red", linewidth = 0.7) +
+  annotate("text", x = max(km_df$time) * 0.6, y = 0.52,
+           label = paste("Median =", km_fit$table["median"], "days"),
+           color = "red", size = 4) +
+  labs(
+    title    = "Kaplan-Meier Survival Curve (Overall)",
+    subtitle = "Shaded region = 95% confidence interval",
+    x        = "Time (days)",
+    y        = "Survival Probability S(t)"
+  ) +
+  theme_minimal(base_size = 13)
+
+plot_km_overall
+
+
+# Stratified KM Curves by Age Group 
+km_group_df <- data.frame(
+  time      = km_fit_grouped$time,
+  surv      = km_fit_grouped$surv,
+  lower     = km_fit_grouped$lower,
+  upper     = km_fit_grouped$upper,
+  age_group = rep(names(km_fit_grouped$strata),
+                  km_fit_grouped$strata)
+)
+
+# Clean up strata labels
+km_group_df$age_group <- gsub("age_group=", "", km_group_df$age_group)
+
+plot_km_stratified <- ggplot(km_group_df,
+                             aes(x = time, y = surv,
+                                 color = age_group,
+                                 fill  = age_group)) +
+  geom_step(linewidth = 1) +
+  geom_ribbon(aes(ymin = lower, ymax = upper),
+              alpha = 0.12, color = NA) +
+  geom_hline(yintercept = 0.5, linetype = "dashed",
+             color = "grey40", linewidth = 0.6) +
+  scale_color_manual(values = c("#2166ac", "#d6604d")) +
+  scale_fill_manual(values  = c("#2166ac", "#d6604d")) +
+  labs(
+    title    = "Stratified Kaplan-Meier Curves by Age Group",
+    subtitle = "Shaded region = 95% confidence interval",
+    x        = "Time (days)",
+    y        = "Survival Probability S(t)",
+    color    = "Age Group",
+    fill     = "Age Group"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+
+plot_km_stratified
+
+
+ggsave("km_overall.png",    plot = plot_km_overall,    width = 8, height = 5, dpi = 300)
+ggsave("km_stratified.png", plot = plot_km_stratified, width = 8, height = 5, dpi = 300)
