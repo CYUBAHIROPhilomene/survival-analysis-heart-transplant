@@ -429,3 +429,150 @@ plot_km_stratified
 
 ggsave("km_overall.png",    plot = plot_km_overall,    width = 8, height = 5, dpi = 300)
 ggsave("km_stratified.png", plot = plot_km_stratified, width = 8, height = 5, dpi = 300)
+
+
+#  NON-PARAMETRIC ANALYSIS — NELSON-AALEN ESTIMATOR
+
+
+#  Fit Nelson-Aalen Estimator
+
+na_fit <- survfit(SurvObj ~ 1, data = stanford2_clean,
+                  type = "fh")
+
+# Extract cumulative hazard H(t) = -log(S(t))
+na_df <- data.frame(
+  time   = na_fit$time,
+  H_t    = na_fit$cumhaz ,
+  S_t    = na_fit$surv,
+  lower  = na_fit$lower,
+  upper  = na_fit$upper
+)
+
+head(na_df, 10)
+
+
+# Derive Non-Parametric Hazard Function h(t) Using numerical differentiation of H(t)
+
+bw <- bw.nrd0(na_df$time)
+haz_smooth <- muhaz::muhaz(
+  times  = stanford2_clean$time,
+  delta  = stanford2_clean$status,
+  bw.method = "global"
+)
+
+haz_df <- data.frame(
+  time = haz_smooth$est.grid,
+  h_t  = haz_smooth$haz.est
+)
+
+head(haz_df, 10)
+
+
+
+# PLOTS
+
+# Nelson-Aalen Cumulative Hazard H(t)
+plot_na_cumhaz <- ggplot(na_df, aes(x = time, y = H_t)) +
+  geom_step(color = "#8856a7", linewidth = 1) +
+  labs(
+    title    = "Nelson-Aalen Cumulative Hazard Function H(t)",
+    subtitle = "Non-parametric estimate",
+    x        = "Time (days)",
+    y        = "Cumulative Hazard H(t)"
+  ) +
+  theme_minimal(base_size = 13)
+
+plot_na_cumhaz
+
+
+# Smoothed Non-Parametric Hazard Function h(t)
+plot_na_haz <- ggplot(haz_df, aes(x = time, y = h_t)) +
+  geom_line(color = "#e6550d", linewidth = 1) +
+  labs(
+    title    = "Non-Parametric Smoothed Hazard Function h(t)",
+    x        = "Time (days)",
+    y        = "Hazard Rate h(t)"
+  ) +
+  theme_minimal(base_size = 13)
+
+plot_na_haz
+
+
+# Side-by-side comparison
+plot_na_combined <- plot_na_cumhaz + plot_na_haz +
+  plot_annotation(
+    title = "Nelson-Aalen Estimator: Cumulative Hazard and Hazard Function"
+  )
+
+plot_na_combined
+
+ggsave("na_cumhaz.png",    plot = plot_na_cumhaz,    width = 7, height = 5, dpi = 300)
+ggsave("na_hazard.png",    plot = plot_na_haz,       width = 7, height = 5, dpi = 300)
+ggsave("na_combined.png",  plot = plot_na_combined,  width = 12, height = 5, dpi = 300)
+
+
+
+# NON-PARAMETRIC HYPOTHESIS TESTING
+
+#  Log-Rank Test
+
+logrank_test <- survdiff(
+  Surv(time, status) ~ age_group,
+  data   = stanford2_clean,
+  rho    = 0
+)
+
+print(logrank_test)
+
+# Extract p-value
+lr_pval <- 1 - pchisq(logrank_test$chisq,
+                      df = length(logrank_test$n) - 1)
+cat("\nLog-Rank Test p-value:", round(lr_pval, 5), "\n")
+
+
+#  Wilcoxon(Breslow)Test
+
+wilcox_test <- survdiff(
+  Surv(time, status) ~ age_group,
+  data   = stanford2_clean,
+  rho    = 1
+)
+print(wilcox_test)
+
+# Extract p-value
+wx_pval <- 1 - pchisq(wilcox_test$chisq,
+                      df = length(wilcox_test$n) - 1)
+cat("\nWilcoxon (Breslow) Test p-value:", round(wx_pval, 5), "\n")
+
+
+
+
+# Summary Comparison Table
+
+test_comparison <- data.frame(
+  Test        = c("Log-Rank", "Wilcoxon (Breslow)"),
+  Chi_Squared = round(c(logrank_test$chisq, wilcox_test$chisq), 4),
+  df          = c(length(logrank_test$n) - 1,
+                  length(wilcox_test$n)  - 1),
+  P_Value     = round(c(lr_pval, wx_pval), 5)
+)
+
+cat("\n--- Test Comparison Table ---\n")
+print(test_comparison)
+
+test_comparison %>%
+  gt() %>%
+  tab_header(
+    title = md("**Table: Log-Rank vs Wilcoxon (Breslow) Test Comparison**")
+  ) %>%
+  cols_label(
+    Test            = "Test",
+    Chi_Squared     = "Chi-Squared",
+    df              = "df",
+    P_Value         = "P-Value"
+  ) %>%
+  cols_align(align = "center", columns = -Test) %>%
+  tab_style(
+    style = list(cell_fill(color = "#d4edda")),
+    locations = cells_body(rows = P_Value < 0.05)
+  )
